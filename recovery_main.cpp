@@ -217,7 +217,7 @@ static void copy_userdata_files() {
 }
 
 // Sets the usb config to 'state'.
-static bool SetUsbConfig(const std::string& state) {
+bool SetUsbConfig(const std::string& state) {
   android::base::SetProperty("sys.usb.config", state);
   return android::base::WaitForProperty("sys.usb.state", state);
 }
