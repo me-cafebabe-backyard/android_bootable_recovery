@@ -115,6 +115,8 @@ PngHandler::PngHandler(const std::string& name) {
 
   if (bit_depth_ == 8 && channels_ == 3 && color_type_ == PNG_COLOR_TYPE_RGB) {
     // 8-bit RGB images: great, nothing to do.
+  } else if (bit_depth_ == 8 && channels_ == 4 && color_type_ == PNG_COLOR_TYPE_RGB_ALPHA) {
+    // 8-bit RGBA images: great, nothing to do.
   } else if (bit_depth_ <= 8 && channels_ == 1 && color_type_ == PNG_COLOR_TYPE_GRAY) {
     // 1-, 2-, 4-, or 8-bit gray images: expand to 8-bit gray.
     png_set_expand_gray_1_2_4_to_8(png_ptr_);
