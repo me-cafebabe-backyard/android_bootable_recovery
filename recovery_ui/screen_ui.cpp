@@ -990,8 +990,17 @@ void ScreenRecoveryUI::draw_screen_locked() {
     return;
   }
 
-  gr_color(0, 0, 0, 255);
-  gr_clear();
+  if (IsCwmTheme()) {
+    draw_background_locked();
+    draw_foreground_locked();
+    if (theme_ == Theme::CWM5) {
+      SetColor(UIElement::TEXT_FILL);
+      gr_fill(0, 0, ScreenWidth(), ScreenHeight());
+    }
+  } else {
+    gr_color(0, 0, 0, 255);
+    gr_clear();
+  }
 
   draw_menu_and_text_buffer_locked(GetMenuHelpMessage());
   draw_battery_capacity_locked();
@@ -1004,11 +1013,6 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(
 
   if (menu_) {
     if (IsCwmTheme()) {
-      draw_background_locked();
-      if (theme_ == Theme::CWM5) {
-        SetColor(UIElement::TEXT_FILL);
-        gr_fill(0, 0, ScreenWidth(), ScreenHeight());
-      }
       int x = 0;
       y = 0;
       SetColor(UIElement::HEADER);
@@ -1219,9 +1223,9 @@ void ScreenRecoveryUI::ProgressThreadLoop() {
       int fps = theme_ == Theme::CWM5 ? 15 : theme_ == Theme::CWM6 ? 20 : animation_fps_;
       interval = 1.0 / fps;
 
-      // update the installation animation, if active
-      // skip this if we have a text overlay (too expensive to update)
-      if ((current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) && !show_text) {
+      // Keep CWM animations behind its text overlay; skip Lineage text overlays as before.
+      if ((current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) &&
+          (!show_text || IsCwmTheme())) {
         if (!intro_done_) {
           if (current_frame_ == intro_frames_.size() - 1) {
             intro_done_ = true;
