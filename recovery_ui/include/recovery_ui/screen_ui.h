@@ -35,7 +35,6 @@ enum class UIElement {
   BATTERY_LOW,
   HEADER,
   MENU,
-  MENU_BG,
   MENU_SEL_BG,
   MENU_SEL_BG_ACTIVE,
   MENU_SEL_FG,
@@ -86,7 +85,6 @@ class DrawInterface {
   virtual int MenuCharHeight() const = 0;
   virtual int MenuCharWidth() const = 0;
   virtual int MenuItemPadding() const = 0;
-  virtual int MenuItemSpacing() const = 0;
   virtual int MenuItemHeight() const = 0;
 };
 
@@ -272,9 +270,6 @@ class MenuDrawFunctions : public DrawInterface {
   int MenuItemPadding() const override {
     return wrappee_.MenuItemPadding();
   };
-  int MenuItemSpacing() const override {
-    return wrappee_.MenuItemSpacing();
-  };
   int MenuItemHeight() const override {
     return wrappee_.MenuItemHeight();
   };
@@ -346,10 +341,6 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
 
   int MenuItemHeight() const override {
     return MenuCharHeight() + 2 * MenuItemPadding();
-  }
-
-  int MenuItemSpacing() const override {
-    return 8;
   }
 
  protected:
