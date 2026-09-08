@@ -198,6 +198,7 @@ cc_binary {
         "mke2fs.recovery",
         "mkshrc.recovery",
         "reboot.recovery",
+        "recovery-resources-cwm",
         "recovery_deps",
         "ueventd.rc.recovery",
     ],
@@ -317,6 +318,17 @@ cc_library_shared {
         any @ libs: libs,
         default: ["librecovery_ui_default"],
     }),
+}
+
+prebuilt_res {
+    name: "recovery-resources-cwm",
+    recovery: true,
+    install_in_root: true,
+    relative_install_path: "images",
+    srcs: [
+        "res-cwm/images/*.png",
+    ],
+    no_full_install: true,
 }
 
 prebuilt_res {
