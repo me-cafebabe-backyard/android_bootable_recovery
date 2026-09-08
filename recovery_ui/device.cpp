@@ -36,6 +36,7 @@ static std::vector<menu_action_t> g_main_actions{
   { "Factory reset", Device::MENU_WIPE },
   { "Advanced", Device::MENU_ADVANCED },
   { "USB Mass Storage", Device::USB_MASS_STORAGE },
+  { "Switch recovery theme", Device::TOGGLE_THEME },
 };
 
 static std::vector<std::string> g_advanced_header{ "Advanced options" };

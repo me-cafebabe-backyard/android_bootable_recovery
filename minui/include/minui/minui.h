@@ -155,6 +155,7 @@ int gr_measure(const GRFont* font, const char* s);
 int gr_font_size(const GRFont* font, int* x, int* y);
 
 void gr_blit(const GRSurface* source, int sx, int sy, int w, int h, int dx, int dy);
+void gr_blit_alpha(const GRSurface* source, int sx, int sy, int w, int h, int dx, int dy);
 unsigned int gr_get_width(const GRSurface* surface);
 unsigned int gr_get_height(const GRSurface* surface);
 

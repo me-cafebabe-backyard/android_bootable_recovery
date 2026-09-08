@@ -30,6 +30,7 @@
 
 // From minui/minui.h.
 class GRSurface;
+struct GRFont;
 
 enum class UIElement {
   BATTERY_LOW,
@@ -86,6 +87,12 @@ class DrawInterface {
   virtual int MenuCharWidth() const = 0;
   virtual int MenuItemPadding() const = 0;
   virtual int MenuItemHeight() const = 0;
+  virtual const GRFont* MenuFont() const {
+    return nullptr;
+  }
+  virtual bool IsCwmTheme() const {
+    return false;
+  }
 };
 
 // Interface for classes that maintain the menu selection and display.
@@ -108,6 +115,9 @@ class Menu {
   virtual int DrawItems(int x, int y, int screen_width, bool long_press) const = 0;
   virtual size_t ItemsCount() const = 0;
   virtual bool IsMain() const = 0;
+  virtual bool IsBack(int /* sel */) const {
+    return false;
+  }
   virtual void SetMenuHeight(int height) = 0;
 
  protected:
@@ -137,6 +147,9 @@ class TextMenu : public Menu {
   bool IsMain() const override {
     // Main menus have no headers
     return text_headers_.size() == 0;
+  }
+  bool IsBack(int sel) const override {
+    return has_back_item_ && sel == static_cast<int>(text_items_.size()) - 1;
   }
 
   bool wrappable() const {
@@ -195,6 +208,7 @@ class TextMenu : public Menu {
 
   // Height in pixels of each character.
   int char_height_;
+  bool has_back_item_;
 };
 
 // This class uses GRSurface's as the menu header and items.
@@ -273,6 +287,12 @@ class MenuDrawFunctions : public DrawInterface {
   int MenuItemHeight() const override {
     return wrappee_.MenuItemHeight();
   };
+  const GRFont* MenuFont() const override {
+    return wrappee_.MenuFont();
+  }
+  bool IsCwmTheme() const override {
+    return wrappee_.IsCwmTheme();
+  }
   int DrawTextLine(int x, int y, const std::string& line, bool bold) const override;
   int DrawTextLines(int x, int y, const std::vector<std::string>& lines) const override;
   int DrawWrappedTextLines(int x, int y, const std::vector<std::string>& lines) const override;
@@ -290,6 +310,10 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
 
   bool Init(const std::string& locale) override;
   std::string GetLocale() const override;
+  void SetTheme(Theme theme) override;
+  Theme GetTheme() const override {
+    return theme_;
+  }
 
   // overall recovery state ("background image")
   void SetBackground(Icon icon) override;
@@ -445,7 +469,11 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
     return menu_char_width_;
   }
   int MenuItemPadding() const override {
-    return menu_char_height_;
+    return IsCwmTheme() ? 0 : menu_char_height_;
+  }
+  const GRFont* MenuFont() const override;
+  bool IsCwmTheme() const override {
+    return theme_ != Theme::LINEAGE;
   }
 
   std::unique_ptr<MenuDrawFunctions> menu_draw_funcs_;
@@ -470,6 +498,28 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   std::unique_ptr<GRSurface> back_icon_;
   std::unique_ptr<GRSurface> back_icon_sel_;
   std::unique_ptr<GRSurface> fastbootd_logo_;
+
+  Theme theme_;
+  GRFont* cwm_font_;
+  std::unique_ptr<GRSurface> cwm5_clockwork_;
+  std::unique_ptr<GRSurface> cwm5_error_;
+  std::unique_ptr<GRSurface> cwm5_firmware_error_;
+  std::unique_ptr<GRSurface> cwm5_firmware_install_;
+  std::unique_ptr<GRSurface> cwm5_installing_;
+  std::vector<std::unique_ptr<GRSurface>> cwm5_indeterminate_;
+  std::unique_ptr<GRSurface> cwm5_progress_empty_;
+  std::unique_ptr<GRSurface> cwm5_progress_fill_;
+  std::unique_ptr<GRSurface> cwm6_cid_;
+  std::unique_ptr<GRSurface> cwm6_clockwork_;
+  std::unique_ptr<GRSurface> cwm6_error_;
+  std::unique_ptr<GRSurface> cwm6_firmware_error_;
+  std::unique_ptr<GRSurface> cwm6_firmware_install_;
+  std::unique_ptr<GRSurface> cwm6_installing_;
+  std::vector<std::unique_ptr<GRSurface>> cwm6_installing_overlay_;
+  std::vector<std::unique_ptr<GRSurface>> cwm6_indeterminate_;
+  std::unique_ptr<GRSurface> cwm6_progress_empty_;
+  std::unique_ptr<GRSurface> cwm6_progress_fill_;
+  std::unique_ptr<GRSurface> cwm6_stitch_;
 
   // current_icon_ points to one of the frames in intro_frames_ or loop_frames_, indexed by
   // current_frame_, or error_icon_.

@@ -66,6 +66,7 @@ namespace fs = std::filesystem;
 
 static constexpr const char* COMMAND_FILE = "/cache/recovery/command";
 static constexpr const char* LOCALE_FILE = "/cache/recovery/last_locale";
+static constexpr const char* THEME_FILE = "/cache/recovery/theme";
 
 static RecoveryUI* ui = nullptr;
 
@@ -198,6 +199,21 @@ static std::string load_locale_from_cache() {
   }
 
   return android::base::Trim(content);
+}
+
+static RecoveryUI::Theme load_theme_from_cache() {
+  if (ensure_path_mounted(THEME_FILE) != 0) {
+    return RecoveryUI::Theme::LINEAGE;
+  }
+
+  std::string content;
+  if (!android::base::ReadFileToString(THEME_FILE, &content)) {
+    return RecoveryUI::Theme::LINEAGE;
+  }
+  content = android::base::Trim(content);
+  if (content == "cwm5") return RecoveryUI::Theme::CWM5;
+  if (content == "cwm6") return RecoveryUI::Theme::CWM6;
+  return RecoveryUI::Theme::LINEAGE;
 }
 
 static void copy_userdata_files() {
@@ -469,6 +485,9 @@ int main(int argc, char** argv) {
       printf("Failed to initialize UI; using stub UI instead.\n");
       device->ResetUI(new StubRecoveryUI());
     }
+  }
+  if (HasCache()) {
+    device->GetUI()->SetTheme(load_theme_from_cache());
   }
 
   BootState boot_state(reason, stage);  // recovery_main owns the state of boot.

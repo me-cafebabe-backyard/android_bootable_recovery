@@ -211,16 +211,8 @@ static void TransformRgbToDraw(const uint8_t* input_row, uint8_t* output_row, in
           reinterpret_cast<uint32_t*>(op)[x] = PackXrgb2101010(ip[0], ip[1], ip[2], ip[3]);
           ip += 4;
         }
-      } else if (pixel_format == PixelFormat::RGBA) {
-        for (int x = 0; x < width; ++x) {
-            *op++ = *(ip + 3);
-            *op++ = *ip++;
-            *op++ = *ip++;
-            *op++ = *ip++;
-            ip++;
-        }
       } else {
-        // copy RGBA to RGBX
+        // The row is already in framebuffer byte order after the optional png_set_swap_alpha().
         memcpy(output_row, input_row, width * 4);
       }
       break;

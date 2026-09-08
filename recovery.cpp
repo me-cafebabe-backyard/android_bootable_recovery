@@ -72,10 +72,28 @@ static constexpr const char* COMMAND_FILE = "/cache/recovery/command";
 static constexpr const char* LAST_KMSG_FILE = "/cache/recovery/last_kmsg";
 static constexpr const char* LAST_LOG_FILE = "/cache/recovery/last_log";
 static constexpr const char* LOCALE_FILE = "/cache/recovery/last_locale";
+static constexpr const char* THEME_FILE = "/cache/recovery/theme";
 
 static constexpr const char* CACHE_ROOT = "/cache";
 
 static bool save_current_log = false;
+
+static void SaveTheme(RecoveryUI* ui) {
+  if (!HasCache()) return;
+
+  const char* theme = "lineage";
+  if (ui->GetTheme() == RecoveryUI::Theme::CWM5) {
+    theme = "cwm5";
+  } else if (ui->GetTheme() == RecoveryUI::Theme::CWM6) {
+    theme = "cwm6";
+  }
+  if (ensure_path_mounted(THEME_FILE) != 0) {
+    LOG(ERROR) << "Failed to mount " << THEME_FILE;
+  } else if (!android::base::WriteStringToFile(theme, THEME_FILE)) {
+    PLOG(ERROR) << "Failed to save recovery theme to " << THEME_FILE;
+  }
+  ensure_path_unmounted(CACHE_ROOT);
+}
 
 /*
  * The recovery tool communicates with the main system through /cache files.
@@ -548,6 +566,21 @@ change_menu:
       case Device::SHUTDOWN_FROM_FASTBOOT:  // Can not happen
       case Device::NO_ACTION:
         break;
+
+      case Device::TOGGLE_THEME:
+        switch (ui->GetTheme()) {
+          case RecoveryUI::Theme::LINEAGE:
+            ui->SetTheme(RecoveryUI::Theme::CWM5);
+            break;
+          case RecoveryUI::Theme::CWM5:
+            ui->SetTheme(RecoveryUI::Theme::CWM6);
+            break;
+          case RecoveryUI::Theme::CWM6:
+            ui->SetTheme(RecoveryUI::Theme::LINEAGE);
+            break;
+        }
+        SaveTheme(ui);
+        goto change_menu;
 
       case Device::ENTER_FASTBOOT:
       case Device::ENTER_RECOVERY:

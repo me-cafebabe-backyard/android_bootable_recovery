@@ -392,6 +392,36 @@ void gr_blit(const GRSurface* source, int sx, int sy, int w, int h, int dx, int 
   }
 }
 
+void gr_blit_alpha(const GRSurface* source, int sx, int sy, int w, int h, int dx, int dy) {
+  if (source == nullptr || source->pixel_bytes != 4) return;
+
+  dx += overscan_offset_x;
+  dy += overscan_offset_y;
+  if (outside(dx, dy) || outside(dx + w - 1, dy + h - 1)) return;
+
+  int src_row_pixels = source->row_bytes / source->pixel_bytes;
+  int dst_row_pixels = gr_draw->row_bytes / gr_draw->pixel_bytes;
+  const uint32_t* src_y =
+      reinterpret_cast<const uint32_t*>(source->data()) + sy * src_row_pixels + sx;
+  uint32_t* dst_y = PixelAt(gr_draw, dx, dy, dst_row_pixels);
+  uint32_t saved_color = gr_current;
+  uint8_t saved_alpha = gr_current_alpha;
+  for (int y = 0; y < h; ++y) {
+    const uint32_t* src = src_y;
+    uint32_t* dst = dst_y;
+    for (int x = 0; x < w; ++x) {
+      uint8_t alpha = get_alpha(*src);
+      gr_current = *src++ | get_alphamask();
+      *dst = alpha == 255 ? gr_current : pixel_blend(alpha, *dst);
+      incr_x(&dst, dst_row_pixels);
+    }
+    src_y += src_row_pixels;
+    incr_y(&dst_y, dst_row_pixels);
+  }
+  gr_current = saved_color;
+  gr_current_alpha = saved_alpha;
+}
+
 unsigned int gr_get_width(const GRSurface* surface) {
   if (surface == nullptr) {
     return 0;

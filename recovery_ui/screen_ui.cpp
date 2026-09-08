@@ -30,7 +30,9 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
+#include <iterator>
 #include <memory>
 #include <string>
 #include <thread>
@@ -65,6 +67,20 @@ static double now() {
   return tv.tv_sec + tv.tv_usec / 1000000.0;
 }
 
+static std::string CwmMenuItem(std::string item) {
+  auto first = std::find_if(item.begin(), item.end(), [](unsigned char ch) { return isalpha(ch); });
+  auto second = first == item.end()
+                    ? item.end()
+                    : std::find_if(std::next(first), item.end(),
+                                   [](unsigned char ch) { return isalpha(ch); });
+  if (first != item.end() &&
+      (second == item.end() || !isupper(static_cast<unsigned char>(*first)) ||
+       !isupper(static_cast<unsigned char>(*second)))) {
+    *first = tolower(static_cast<unsigned char>(*first));
+  }
+  return " - " + item;
+}
+
 Menu::Menu(size_t initial_selection, const DrawInterface& draw_func)
     : selection_(initial_selection), draw_funcs_(draw_func) {}
 
@@ -80,11 +96,19 @@ TextMenu::TextMenu(bool wrappable, size_t max_length,
       calibrated_height_(false),
       max_item_length_(max_length),
       text_headers_(headers),
-      char_height_(char_height) {
+      char_height_(char_height),
+      has_back_item_(draw_funcs.IsCwmTheme() && !headers.empty()) {
 
   size_t items_count = items.size();
   for (size_t i = 0; i < items_count; ++i) {
-    text_items_.emplace_back(items[i].substr(0, max_item_length_));
+    std::string item = items[i];
+    if (draw_funcs.IsCwmTheme()) {
+      item = item == "Back" ? " - +++++Go Back+++++" : CwmMenuItem(std::move(item));
+    }
+    text_items_.emplace_back(item.substr(0, max_item_length_));
+  }
+  if (has_back_item_ && (items.empty() || items.back() != "Back")) {
+    text_items_.emplace_back(" - +++++Go Back+++++");
   }
 
   CHECK(!text_items_.empty());
@@ -127,7 +151,7 @@ int TextMenu::Select(int sel) {
   CHECK_LE(ItemsCount(), static_cast<size_t>(std::numeric_limits<int>::max()));
   int count = ItemsCount();
 
-  int min = IsMain() ? 0 : -1; // -1 is back arrow
+  int min = (IsMain() || has_back_item_) ? 0 : -1;  // -1 is the Lineage back arrow.
 
   if (sel < min) {
     selection_ = wrappable() ? count - 1 : min;
@@ -188,7 +212,9 @@ int TextMenu::DrawItems(int x, int y, int screen_width, bool long_press) const {
   int padding = draw_funcs_.MenuItemPadding();
 
   draw_funcs_.SetColor(UIElement::MENU);
-  offset += draw_funcs_.DrawHorizontalRule(y + offset) + 4;
+  if (!draw_funcs_.IsCwmTheme()) {
+    offset += draw_funcs_.DrawHorizontalRule(y + offset) + 4;
+  }
 
   int item_container_offset = offset; // store it for drawing scrollbar on most top
 
@@ -335,7 +361,7 @@ MenuDrawFunctions::MenuDrawFunctions(const DrawInterface& wrappee)
 }
 
 int MenuDrawFunctions::DrawTextLine(int x, int y, const std::string& line, bool bold) const {
-  gr_text(gr_menu_font(), x, y + MenuItemPadding(), line.c_str(), bold);
+  gr_text(MenuFont(), x, y + MenuItemPadding(), line.c_str(), bold);
   return 2 * MenuItemPadding() + MenuCharHeight();
 }
 
@@ -394,6 +420,8 @@ ScreenRecoveryUI::ScreenRecoveryUI()
       density_(static_cast<float>(android::base::GetIntProperty("ro.sf.lcd_density", 160)) / 160.f),
       blank_unblank_on_init_(
           android::base::GetBoolProperty("ro.recovery.ui.blank_unblank_on_init", false)),
+      theme_(Theme::LINEAGE),
+      cwm_font_(nullptr),
       current_icon_(NONE),
       current_frame_(0),
       intro_done_(false),
@@ -428,11 +456,54 @@ ScreenRecoveryUI::~ScreenRecoveryUI() {
   if (progress_thread_.joinable()) {
     progress_thread_.join();
   }
+  if (cwm_font_ != nullptr) {
+    delete cwm_font_->texture;
+    free(cwm_font_);
+  }
   // No-op if gr_init() (via Init()) was not called or had failed.
   gr_exit();
 }
 
+const GRFont* ScreenRecoveryUI::MenuFont() const {
+  return IsCwmTheme() ? cwm_font_ : gr_menu_font();
+}
+
+void ScreenRecoveryUI::SetTheme(Theme theme) {
+  std::lock_guard<std::mutex> lg(updateMutex);
+  auto valid = [](const auto& surface) {
+    return surface != nullptr && gr_get_width(surface.get()) > 0 &&
+           gr_get_height(surface.get()) > 0;
+  };
+  bool cwm5_valid = cwm_font_ != nullptr && valid(cwm5_clockwork_) && valid(cwm5_error_) &&
+                    valid(cwm5_firmware_error_) && valid(cwm5_firmware_install_) &&
+                    valid(cwm5_installing_) && valid(cwm5_progress_empty_) &&
+                    valid(cwm5_progress_fill_) &&
+                    std::all_of(cwm5_indeterminate_.begin(), cwm5_indeterminate_.end(), valid);
+  bool cwm6_valid = cwm_font_ != nullptr && valid(cwm6_cid_) && valid(cwm6_clockwork_) &&
+                    valid(cwm6_error_) && valid(cwm6_firmware_error_) &&
+                    valid(cwm6_firmware_install_) && valid(cwm6_installing_) &&
+                    valid(cwm6_progress_empty_) && valid(cwm6_progress_fill_) &&
+                    valid(cwm6_stitch_) &&
+                    std::all_of(cwm6_installing_overlay_.begin(), cwm6_installing_overlay_.end(),
+                                valid) &&
+                    std::all_of(cwm6_indeterminate_.begin(), cwm6_indeterminate_.end(), valid);
+  if ((theme == Theme::CWM5 && !cwm5_valid) || (theme == Theme::CWM6 && !cwm6_valid)) {
+    LOG(ERROR) << "ClockworkMod theme resources are incomplete";
+    theme = Theme::LINEAGE;
+  }
+  theme_ = theme;
+  gr_font_size(MenuFont(), &menu_char_width_, &menu_char_height_);
+  menu_.reset();
+  update_screen_locked();
+}
+
 const GRSurface* ScreenRecoveryUI::GetCurrentFrame() const {
+  if (theme_ == Theme::CWM5) {
+    return current_icon_ == ERROR ? cwm5_error_.get() : cwm5_installing_.get();
+  }
+  if (theme_ == Theme::CWM6) {
+    return current_icon_ == ERROR ? cwm6_error_.get() : cwm6_installing_.get();
+  }
   if (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) {
     return intro_done_ ? loop_frames_[current_frame_].get() : intro_frames_[current_frame_].get();
   }
@@ -440,6 +511,9 @@ const GRSurface* ScreenRecoveryUI::GetCurrentFrame() const {
 }
 
 const GRSurface* ScreenRecoveryUI::GetCurrentText() const {
+  if (IsCwmTheme()) {
+    return nullptr;
+  }
   switch (current_icon_) {
     case ERASING:
       return erasing_text_.get();
@@ -483,6 +557,9 @@ static constexpr int kLayouts[LAYOUT_MAX][DIMENSION_MAX] = {
 };
 
 int ScreenRecoveryUI::GetAnimationBaseline() const {
+  if (IsCwmTheme()) {
+    return (ScreenHeight() - gr_get_height(GetCurrentFrame())) / 2;
+  }
   return GetTextBaseline() - PixelsFromDp(kLayouts[layout_][ICON]) -
          gr_get_height(loop_frames_[0].get());
 }
@@ -493,6 +570,12 @@ int ScreenRecoveryUI::GetTextBaseline() const {
 }
 
 int ScreenRecoveryUI::GetProgressBaseline() const {
+  if (IsCwmTheme()) {
+    const auto* icon = theme_ == Theme::CWM5 ? cwm5_installing_.get() : cwm6_installing_.get();
+    const auto* bar =
+        theme_ == Theme::CWM5 ? cwm5_progress_empty_.get() : cwm6_progress_empty_.get();
+    return (3 * ScreenHeight() + gr_get_height(icon) - 2 * gr_get_height(bar)) / 4;
+  }
   int elements_sum = gr_get_height(loop_frames_[0].get()) + PixelsFromDp(kLayouts[layout_][ICON]) +
                      gr_get_height(installing_text_.get()) + PixelsFromDp(kLayouts[layout_][TEXT]) +
                      gr_get_height(progress_bar_fill_.get());
@@ -506,6 +589,30 @@ void ScreenRecoveryUI::draw_background_locked() {
   pagesIdentical = false;
   gr_color(0, 0, 0, 255);
   gr_clear();
+  if (theme_ == Theme::CWM6) {
+    int width = gr_get_width(cwm6_stitch_.get());
+    int height = gr_get_height(cwm6_stitch_.get());
+    for (int y = 0; y < ScreenHeight(); y += height) {
+      for (int x = 0; x < ScreenWidth(); x += width) {
+        DrawSurface(cwm6_stitch_.get(), 0, 0, std::min(width, ScreenWidth() - x),
+                    std::min(height, ScreenHeight() - y), x, y);
+      }
+    }
+  }
+  if (IsCwmTheme()) {
+    const GRSurface* icon;
+    if (current_icon_ == ERROR) {
+      icon = theme_ == Theme::CWM5 ? cwm5_error_.get() : cwm6_error_.get();
+    } else if (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) {
+      icon = theme_ == Theme::CWM5 ? cwm5_installing_.get() : cwm6_installing_.get();
+    } else {
+      icon = theme_ == Theme::CWM5 ? cwm5_clockwork_.get() : cwm6_clockwork_.get();
+    }
+    int x = (ScreenWidth() - gr_get_width(icon)) / 2;
+    int y = (ScreenHeight() - gr_get_height(icon)) / 2;
+    DrawSurface(icon, 0, 0, gr_get_width(icon), gr_get_height(icon), x, y);
+    return;
+  }
   if (current_icon_ != NONE) {
     if (max_stage != -1) {
       int stage_height = gr_get_height(stage_marker_empty_.get());
@@ -530,6 +637,37 @@ void ScreenRecoveryUI::draw_background_locked() {
 // Draws the animation and progress bar (if any) on the screen. Does not flip pages. Should only be
 // called with updateMutex locked.
 void ScreenRecoveryUI::draw_foreground_locked() {
+  if (theme_ == Theme::CWM6 &&
+      (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING)) {
+    const auto& overlay =
+        cwm6_installing_overlay_[current_frame_ % cwm6_installing_overlay_.size()];
+    int base_x = (ScreenWidth() - gr_get_width(cwm6_installing_.get())) / 2;
+    int base_y = (ScreenHeight() - gr_get_height(cwm6_installing_.get())) / 2;
+    DrawSurface(overlay.get(), 0, 0, gr_get_width(overlay.get()), gr_get_height(overlay.get()),
+                base_x + 13, base_y + 190);
+  }
+
+  if (IsCwmTheme()) {
+    if (progressBarType == EMPTY) return;
+    const auto& frames = theme_ == Theme::CWM5 ? cwm5_indeterminate_ : cwm6_indeterminate_;
+    const GRSurface* empty =
+        theme_ == Theme::CWM5 ? cwm5_progress_empty_.get() : cwm6_progress_empty_.get();
+    const GRSurface* fill =
+        theme_ == Theme::CWM5 ? cwm5_progress_fill_.get() : cwm6_progress_fill_.get();
+    int width = gr_get_width(empty);
+    int height = gr_get_height(empty);
+    int x = (ScreenWidth() - width) / 2;
+    int y = GetProgressBaseline();
+    if (progressBarType == INDETERMINATE) {
+      const auto& frame = frames[current_frame_ % frames.size()];
+      DrawSurface(frame.get(), 0, 0, width, height, x, y);
+    } else {
+      int pos = static_cast<int>((progressScopeStart + progress * progressScopeSize) * width);
+      DrawSurface(empty, pos, 0, width - pos, height, x + pos, y);
+      if (pos > 0) DrawSurface(fill, 0, 0, pos, height, x, y);
+    }
+    return;
+  }
   if (current_icon_ != NONE) {
     const auto& frame = GetCurrentFrame();
     int frame_width = gr_get_width(frame);
@@ -584,6 +722,26 @@ void ScreenRecoveryUI::draw_foreground_locked() {
    fastbootd dark: #E65100
    fastboot light: #FDD835 */
 void ScreenRecoveryUI::SetColor(UIElement e) const {
+  if (IsCwmTheme()) {
+    switch (e) {
+      case UIElement::MENU:
+      case UIElement::MENU_SEL_BG:
+      case UIElement::MENU_SEL_BG_ACTIVE:
+      case UIElement::SCROLLBAR:
+        gr_color(0, 191, 255, 255);
+        break;
+      case UIElement::MENU_SEL_FG:
+        gr_color(255, 255, 255, 255);
+        break;
+      case UIElement::TEXT_FILL:
+        gr_color(0, 0, 0, 160);
+        break;
+      default:
+        gr_color(200, 200, 200, 255);
+        break;
+    }
+    return;
+  }
   switch (e) {
     case UIElement::BATTERY_LOW:
       if (fastbootd_logo_enabled_)
@@ -726,10 +884,18 @@ int ScreenRecoveryUI::ScreenHeight() const {
 
 void ScreenRecoveryUI::DrawSurface(const GRSurface* surface, int sx, int sy, int w, int h, int dx,
                                    int dy) const {
-  gr_blit(surface, sx, sy, w, h, dx, dy);
+  if (IsCwmTheme()) {
+    gr_blit_alpha(surface, sx, sy, w, h, dx, dy);
+  } else {
+    gr_blit(surface, sx, sy, w, h, dx, dy);
+  }
 }
 
 int ScreenRecoveryUI::DrawHorizontalRule(int y) const {
+  if (IsCwmTheme()) {
+    gr_fill(0, y, ScreenWidth(), y + 2);
+    return 2;
+  }
   gr_fill(0, y + 4, ScreenWidth(), y + 6);
   return 8;
 }
@@ -755,8 +921,8 @@ void ScreenRecoveryUI::DrawTextIcon(int x, int y, const GRSurface* surface) cons
 }
 
 int ScreenRecoveryUI::DrawTextLine(int x, int y, const std::string& line, bool bold) const {
-  gr_text(gr_sys_font(), x, y, line.c_str(), bold);
-  return char_height_ + 4;
+  gr_text(IsCwmTheme() ? MenuFont() : gr_sys_font(), x, y, line.c_str(), bold);
+  return IsCwmTheme() ? menu_char_height_ : char_height_ + 4;
 }
 
 int ScreenRecoveryUI::DrawTextLines(int x, int y, const std::vector<std::string>& lines) const {
@@ -837,35 +1003,58 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(
   int y = margin_height_;
 
   if (menu_) {
-    auto& logo = fastbootd_logo_enabled_ ? fastbootd_logo_ : lineage_logo_;
-    auto logo_width = gr_get_width(logo.get());
-    auto logo_height = gr_get_height(logo.get());
-    auto centered_x = ScreenWidth() / 2 - logo_width / 2;
-    DrawSurface(logo.get(), 0, 0, logo_width, logo_height, centered_x, y);
-    y += logo_height;
+    if (IsCwmTheme()) {
+      draw_background_locked();
+      if (theme_ == Theme::CWM5) {
+        SetColor(UIElement::TEXT_FILL);
+        gr_fill(0, 0, ScreenWidth(), ScreenHeight());
+      }
+      int x = 0;
+      y = 0;
+      SetColor(UIElement::HEADER);
+      const char* header = theme_ == Theme::CWM5 ? "ClockworkMod Recovery v5.0.2.8"
+                                                  : "ClockworkMod Recovery v6.0.5.1";
+      y += DrawTextLines(x, y, { header, "" });
+      if (fastbootd_logo_enabled_) {
+        y += DrawTextLines(x, y, title_lines_);
+      }
+      y += menu_->DrawHeader(x, y);
+      menu_start_y_ = y;
+      int log_height = theme_ == Theme::CWM6 ? 3 * menu_char_height_ : 0;
+      menu_->SetMenuHeight(std::max(0, ScreenHeight() - menu_start_y_ - log_height));
+      y += menu_->DrawItems(x, y, ScreenWidth(), IsLongPress());
+    } else {
+      auto& logo = fastbootd_logo_enabled_ ? fastbootd_logo_ : lineage_logo_;
+      auto logo_width = gr_get_width(logo.get());
+      auto logo_height = gr_get_height(logo.get());
+      auto centered_x = ScreenWidth() / 2 - logo_width / 2;
+      DrawSurface(logo.get(), 0, 0, logo_width, logo_height, centered_x, y);
+      y += logo_height;
 
-    if (!menu_->IsMain()) {
-      auto icon_w = gr_get_width(back_icon_.get());
-      auto icon_h = gr_get_height(back_icon_.get());
-      auto icon_x = centered_x / 2 - icon_w / 2;
-      auto icon_y = y - logo_height / 2 - icon_h / 2;
-      gr_blit(back_icon_sel_ && menu_->selection() == -1 ? back_icon_sel_.get() : back_icon_.get(),
-              0, 0, icon_w, icon_h, icon_x, icon_y);
-    }
+      if (!menu_->IsMain()) {
+        auto icon_w = gr_get_width(back_icon_.get());
+        auto icon_h = gr_get_height(back_icon_.get());
+        auto icon_x = centered_x / 2 - icon_w / 2;
+        auto icon_y = y - logo_height / 2 - icon_h / 2;
+        gr_blit(back_icon_sel_ && menu_->selection() == -1 ? back_icon_sel_.get()
+                                                           : back_icon_.get(),
+                0, 0, icon_w, icon_h, icon_x, icon_y);
+      }
 
-    int x = margin_width_ + kMenuIndent;
-    if (!title_lines_.empty()) {
-      SetColor(UIElement::INFO);
-      y += DrawTextLines(x, y, title_lines_);
-    }
-    y += menu_->DrawHeader(x, y);
-    menu_start_y_ = y + 12; // Skip horizontal rule and some margin
-    menu_->SetMenuHeight(std::max(0, ScreenHeight() - menu_start_y_));
-    y += menu_->DrawItems(x, y, ScreenWidth(), IsLongPress());
-    if (!help_message.empty()) {
-      y += MenuItemPadding();
-      SetColor(UIElement::INFO);
-      y += DrawTextLines(x, y, help_message);
+      int x = margin_width_ + kMenuIndent;
+      if (!title_lines_.empty()) {
+        SetColor(UIElement::INFO);
+        y += DrawTextLines(x, y, title_lines_);
+      }
+      y += menu_->DrawHeader(x, y);
+      menu_start_y_ = y + 12;  // Skip horizontal rule and some margin.
+      menu_->SetMenuHeight(std::max(0, ScreenHeight() - menu_start_y_));
+      y += menu_->DrawItems(x, y, ScreenWidth(), IsLongPress());
+      if (!help_message.empty()) {
+        y += MenuItemPadding();
+        SetColor(UIElement::INFO);
+        y += DrawTextLines(x, y, help_message);
+      }
     }
   }
 
@@ -874,8 +1063,9 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(
   SetColor(UIElement::LOG);
   int row = text_row_;
   size_t count = 0;
-  for (int ty = ScreenHeight() - margin_height_ - char_height_; ty >= y && count < text_rows_;
-       ty -= char_height_, ++count) {
+  int log_char_height = IsCwmTheme() ? menu_char_height_ : char_height_;
+  for (int ty = ScreenHeight() - margin_height_ - log_char_height;
+       ty >= y && count < text_rows_; ty -= log_char_height, ++count) {
     DrawTextLine(margin_width_, ty, text_[row], false);
     --row;
     if (row < 0) row = text_rows_ - 1;
@@ -884,6 +1074,7 @@ void ScreenRecoveryUI::draw_menu_and_text_buffer_locked(
 
 // Draws the battery capacity on the screen. Should only be called with updateMutex locked.
 void ScreenRecoveryUI::draw_battery_capacity_locked() {
+  if (IsCwmTheme()) return;
   int x;
   int y = margin_height_ + gr_get_height(lineage_logo_.get());
   int icon_x, icon_y, icon_h, icon_w;
@@ -948,7 +1139,7 @@ void ScreenRecoveryUI::update_screen_locked() {
 // Updates only the progress bar, if possible, otherwise redraws the screen.
 // Should only be called with updateMutex locked.
 void ScreenRecoveryUI::update_progress_locked() {
-  if (show_text || !pagesIdentical) {
+  if (show_text || !pagesIdentical || theme_ == Theme::CWM6) {
     draw_screen_locked();  // Must redraw the whole screen
     pagesIdentical = true;
   } else {
@@ -1025,6 +1216,8 @@ void ScreenRecoveryUI::ProgressThreadLoop() {
     bool redraw = false;
     {
       std::lock_guard<std::mutex> lg(updateMutex);
+      int fps = theme_ == Theme::CWM5 ? 15 : theme_ == Theme::CWM6 ? 20 : animation_fps_;
+      interval = 1.0 / fps;
 
       // update the installation animation, if active
       // skip this if we have a text overlay (too expensive to update)
@@ -1162,6 +1355,9 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
   if (!InitTextParams()) {
     return false;
   }
+  if (gr_init_font("cwm_font", &cwm_font_) != 0) {
+    LOG(ERROR) << "Failed to load ClockworkMod font";
+  }
   menu_draw_funcs_ = std::make_unique<MenuDrawFunctions>(*this);
 
   if (blank_unblank_on_init_) {
@@ -1202,6 +1398,36 @@ bool ScreenRecoveryUI::Init(const std::string& locale) {
   } else {
     lineage_logo_ = LoadBitmap("logo_image");
   }
+
+  cwm5_clockwork_ = LoadBitmap("cwm5_icon_clockwork");
+  cwm5_error_ = LoadBitmap("cwm5_icon_error");
+  cwm5_firmware_error_ = LoadBitmap("cwm5_icon_firmware_error");
+  cwm5_firmware_install_ = LoadBitmap("cwm5_icon_firmware_install");
+  cwm5_installing_ = LoadBitmap("cwm5_icon_installing");
+  for (int i = 1; i <= 6; ++i) {
+    cwm5_indeterminate_.emplace_back(
+        LoadBitmap(android::base::StringPrintf("cwm5_indeterminate%d", i)));
+  }
+  cwm5_progress_empty_ = LoadBitmap("cwm5_progress_empty");
+  cwm5_progress_fill_ = LoadBitmap("cwm5_progress_fill");
+
+  cwm6_cid_ = LoadBitmap("cwm6_icon_cid");
+  cwm6_clockwork_ = LoadBitmap("cwm6_icon_clockwork");
+  cwm6_error_ = LoadBitmap("cwm6_icon_error");
+  cwm6_firmware_error_ = LoadBitmap("cwm6_icon_firmware_error");
+  cwm6_firmware_install_ = LoadBitmap("cwm6_icon_firmware_install");
+  cwm6_installing_ = LoadBitmap("cwm6_icon_installing");
+  for (int i = 1; i <= 7; ++i) {
+    cwm6_installing_overlay_.emplace_back(
+        LoadBitmap(android::base::StringPrintf("cwm6_icon_installing_overlay%02d", i)));
+  }
+  for (int i = 1; i <= 6; ++i) {
+    cwm6_indeterminate_.emplace_back(
+        LoadBitmap(android::base::StringPrintf("cwm6_indeterminate%02d", i)));
+  }
+  cwm6_progress_empty_ = LoadBitmap("cwm6_progress_empty");
+  cwm6_progress_fill_ = LoadBitmap("cwm6_progress_fill");
+  cwm6_stitch_ = LoadBitmap("cwm6_stitch");
 
   // Background text for "installing_update" could be "installing update" or
   // "installing security update". It will be set after Init() according to the commands in BCB.
@@ -1462,6 +1688,10 @@ std::unique_ptr<Menu> ScreenRecoveryUI::CreateMenu(
     const GRSurface* graphic_header, const std::vector<const GRSurface*>& graphic_items,
     const std::vector<std::string>& text_headers, const std::vector<std::string>& text_items,
     size_t initial_selection) const {
+  if (IsCwmTheme()) {
+    return CreateMenu(text_headers, text_items, initial_selection);
+  }
+
   // horizontal unusable area: margin width + menu indent
   size_t max_width = ScreenWidth() - margin_width_ - kMenuIndent;
   // vertical unusable area: margin height + title lines + helper message + high light bar.
@@ -1481,7 +1711,8 @@ std::unique_ptr<Menu> ScreenRecoveryUI::CreateMenu(const std::vector<std::string
                                                    size_t initial_selection) const {
   int menu_char_width = MenuCharWidth();
   int menu_char_height = MenuCharHeight();
-  int menu_cols = (ScreenWidth() - margin_width_*2 - kMenuIndent) / menu_char_width;
+  int menu_cols =
+      (ScreenWidth() - (IsCwmTheme() ? 0 : margin_width_ * 2 + kMenuIndent)) / menu_char_width;
   bool wrap_selection = !HasThreeButtons() && !HasTouchScreen();
   return std::make_unique<TextMenu>(wrap_selection, menu_cols, text_headers, text_items,
                                     initial_selection, menu_char_height, *menu_draw_funcs_);
@@ -1533,7 +1764,7 @@ int ScreenRecoveryUI::SelectMenu(const Point& p) {
   int new_sel = Device::kNoAction;
   std::lock_guard<std::mutex> lg(updateMutex);
   if (menu_) {
-    if (!menu_->IsMain()) {
+    if (!menu_->IsMain() && !IsCwmTheme()) {
       // Back arrow hitbox
       const static int logo_width = gr_get_width(lineage_logo_.get());
       const static int logo_height = gr_get_height(lineage_logo_.get());
@@ -1644,7 +1875,7 @@ size_t ScreenRecoveryUI::ShowMenu(std::unique_ptr<Menu>&& menu, bool menu_only,
           selected = ScrollMenu(1);
           break;
         case Device::kInvokeItem:
-          if (selected < 0) {
+          if (selected < 0 || menu_->IsBack(selected)) {
             chosen_item = Device::kGoBack;
           } else {
             chosen_item = selected;

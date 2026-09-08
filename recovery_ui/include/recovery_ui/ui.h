@@ -94,6 +94,12 @@ class RecoveryUI {
     DETERMINATE,
   };
 
+  enum class Theme {
+    LINEAGE,
+    CWM5,
+    CWM6,
+  };
+
   enum KeyAction {
     ENQUEUE,
     TOGGLE,
@@ -168,6 +174,11 @@ class RecoveryUI {
   virtual bool Init(const std::string& locale);
 
   virtual std::string GetLocale() const = 0;
+
+  virtual void SetTheme(Theme /* theme */) {}
+  virtual Theme GetTheme() const {
+    return Theme::LINEAGE;
+  }
 
   // Shows a stage indicator. Called immediately after Init().
   virtual void SetStage(int current, int max) = 0;
