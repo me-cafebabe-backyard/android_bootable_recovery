@@ -520,6 +520,8 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   std::unique_ptr<GRSurface> cwm6_progress_empty_;
   std::unique_ptr<GRSurface> cwm6_progress_fill_;
   std::unique_ptr<GRSurface> cwm6_stitch_;
+  size_t cwm_progress_frame_ = 0;
+  size_t cwm_installing_frame_ = 0;
 
   // current_icon_ points to one of the frames in intro_frames_ or loop_frames_, indexed by
   // current_frame_, or error_icon_.

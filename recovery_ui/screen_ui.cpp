@@ -639,8 +639,7 @@ void ScreenRecoveryUI::draw_background_locked() {
 void ScreenRecoveryUI::draw_foreground_locked() {
   if (theme_ == Theme::CWM6 &&
       (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING)) {
-    const auto& overlay =
-        cwm6_installing_overlay_[current_frame_ % cwm6_installing_overlay_.size()];
+    const auto& overlay = cwm6_installing_overlay_[cwm_installing_frame_];
     int base_x = (ScreenWidth() - gr_get_width(cwm6_installing_.get())) / 2;
     int base_y = (ScreenHeight() - gr_get_height(cwm6_installing_.get())) / 2;
     DrawSurface(overlay.get(), 0, 0, gr_get_width(overlay.get()), gr_get_height(overlay.get()),
@@ -658,13 +657,16 @@ void ScreenRecoveryUI::draw_foreground_locked() {
     int height = gr_get_height(empty);
     int x = (ScreenWidth() - width) / 2;
     int y = GetProgressBaseline();
+    gr_color(0, 0, 0, 255);
+    gr_fill(x, y, x + width, y + height);
     if (progressBarType == INDETERMINATE) {
-      const auto& frame = frames[current_frame_ % frames.size()];
+      const auto& frame = frames[cwm_progress_frame_];
       DrawSurface(frame.get(), 0, 0, width, height, x, y);
+      cwm_progress_frame_ = (cwm_progress_frame_ + 1) % frames.size();
     } else {
       int pos = static_cast<int>((progressScopeStart + progress * progressScopeSize) * width);
-      DrawSurface(empty, pos, 0, width - pos, height, x + pos, y);
       if (pos > 0) DrawSurface(fill, 0, 0, pos, height, x, y);
+      if (pos < width - 1) DrawSurface(empty, pos, 0, width - pos, height, x + pos, y);
     }
     return;
   }
@@ -1223,18 +1225,30 @@ void ScreenRecoveryUI::ProgressThreadLoop() {
       int fps = theme_ == Theme::CWM5 ? 15 : theme_ == Theme::CWM6 ? 20 : animation_fps_;
       interval = 1.0 / fps;
 
-      // Keep CWM animations behind its text overlay; skip Lineage text overlays as before.
-      if ((current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) &&
-          (!show_text || IsCwmTheme())) {
-        if (!intro_done_) {
-          if (current_frame_ == intro_frames_.size() - 1) {
-            intro_done_ = true;
-            current_frame_ = 0;
-          } else {
-            ++current_frame_;
+      bool animate = (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) && !show_text;
+      if (theme_ == Theme::CWM5) {
+        animate = progressBarType == INDETERMINATE && !show_text;
+      } else if (theme_ == Theme::CWM6) {
+        animate = progressBarType == INDETERMINATE || current_icon_ == INSTALLING_UPDATE ||
+                  current_icon_ == ERASING;
+      }
+      if (animate) {
+        if (theme_ == Theme::CWM6) {
+          if (current_icon_ == INSTALLING_UPDATE || current_icon_ == ERASING) {
+            cwm_installing_frame_ =
+                (cwm_installing_frame_ + 1) % cwm6_installing_overlay_.size();
           }
-        } else {
-          current_frame_ = (current_frame_ + 1) % loop_frames_.size();
+        } else if (theme_ == Theme::LINEAGE) {
+          if (!intro_done_) {
+            if (current_frame_ == intro_frames_.size() - 1) {
+              intro_done_ = true;
+              current_frame_ = 0;
+            } else {
+              ++current_frame_;
+            }
+          } else {
+            current_frame_ = (current_frame_ + 1) % loop_frames_.size();
+          }
         }
 
         redraw = true;
